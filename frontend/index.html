@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portfolio Enricher</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <script>
+    async function uploadCsv(ev){
+      ev.preventDefault();
+      const fileInput = document.getElementById('csv');
+      const btn = document.getElementById('process');
+      const status = document.getElementById('status');
+      const results = document.getElementById('results');
+      const errors = document.getElementById('errors');
+      const downloadBtn = document.getElementById('download');
+      results.innerHTML = '';
+      errors.innerHTML = '';
+      downloadBtn.style.display='none';
+      if(!fileInput.files.length){ alert('Please choose a CSV file'); return; }
+      btn.disabled=true; status.textContent='Processing...';
+      const fd = new FormData(); fd.append('file', fileInput.files[0]);
+      try{
+        const resp = await fetch('/api/enrich', { method:'POST', body: fd });
+        if(!resp.ok){
+          const err = await resp.json().catch(()=>({detail:'Unknown error'}));
+          throw new Error(err.detail||'Failed');
+        }
+        const data = await resp.json();
+        renderTable(results, data.cleaned_rows);
+        renderErrors(errors, data.errors);
+        prepareDownload(downloadBtn, data.csv_base64, data.filename || 'enriched.csv');
+      }catch(e){
+        alert('Error: ' + e.message);
+      }finally{
+        btn.disabled=false; status.textContent='';
+      }
+    }
+
+    function renderTable(container, rows){
+      if(!rows || !rows.length){ container.innerHTML = '<p class="error">No valid rows found.</p>'; return; }
+      const headers = ['Name','Symbol','Price','# of Shares','Market Value'];
+      const thead = '<thead><tr>'+headers.map(h=>`<th>${h}</th>`).join('')+'</tr></thead>';
+      const tbody = '<tbody>'+rows.map(r=>`<tr>
+        <td>${escapeHtml(r['Name']??'')}</td>
+        <td><span class="pill">${escapeHtml(r['Symbol']??'')}</span></td>
+        <td>$${Number(r['Price']).toFixed(2)}</td>
+        <td>${Number(r['# of Shares'])}</td>
+        <td>$${Number(r['Market Value']).toFixed(2)}</td>
+      </tr>`).join('')+'</tbody>';
+      container.innerHTML = `<div class="card"><h3>Enriched Portfolio</h3><table>${thead}${tbody}</table></div>`;
+    }
+
+    function renderErrors(container, errs){
+      if(!errs || !errs.length){ container.innerHTML = '<div class="card"><strong>No errors</strong></div>'; return; }
+      const headers = ['','Name','Symbol','Price','# of Shares','Market Value'];
+      const thead = '<thead><tr>'+headers.map(h=>`<th>${h}</th>`).join('')+'</tr></thead>';
+      const tbody = '<tbody>'+errs.map(e=>{
+        const row = e.original || {};
+        const name = valueOrDash(row['name']);
+        const symbol = valueOrDash(row['symbol']);
+        const price = numberOrDash(row['price']);
+        const shares = numberOrDash(row['# of shares'] ?? row['shares']);
+        const mv = numberOrDash(row['market value']);
+        const reason = escapeHtml(e.reason || 'Excluded');
+        return `<tr>
+          <td>
+            <span class="row-tip">
+              <span class="info-icon">?</span>
+              <span class="tooltip">${reason}</span>
+            </span>
+          </td>
+          <td>${escapeHtml(name)}</td>
+          <td>${symbol === '-' ? '-' : `<span class="pill">${escapeHtml(symbol)}</span>`}</td>
+          <td>${price === '-' ? '-' : `$${price}`}</td>
+          <td>${shares}</td>
+          <td>${mv === '-' ? '-' : `$${mv}`}</td>
+        </tr>`;
+      }).join('')+'</tbody>';
+      container.innerHTML = `<div class="card"><h3>Excluded Rows</h3><table>${thead}${tbody}</table></div>`;
+    }
+
+    function valueOrDash(v){
+      const s = (v===undefined||v===null)?'':String(v).trim();
+      return s ? s : '-';
+    }
+
+    function numberOrDash(v){
+      if(v===undefined||v===null) return '-';
+      const str = String(v).trim();
+      if(str === '' || str === '0') return '-';
+      const n = Number(str.replace(/,/g,''));
+      return Number.isFinite(n) && n !== 0 ? n.toFixed(2) : '-';
+    }
+
+    function prepareDownload(btn, b64, filename){
+      if(!b64){ return; }
+      const byteChars = atob(b64);
+      const byteNums = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([new Uint8Array(byteNums)], {type:'text/csv'});
+      const url = URL.createObjectURL(blob);
+      btn.href = url; btn.download = filename; btn.style.display='inline-block';
+    }
+
+    function escapeHtml(str){
+      return String(str).replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[s]));
+    }
+
+    // Clear previous results when new file is selected
+    function clearResults(){
+      document.getElementById('results').innerHTML = '';
+      document.getElementById('errors').innerHTML = '';
+      document.getElementById('download').style.display = 'none';
+    }
+
+    // Add event listener when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+      document.getElementById('csv').addEventListener('change', clearResults);
+    });
+  </script>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Portfolio Enricher</h1>
+      <p>Upload your CSV, we will validate tickers via Finnhub, fetch live prices, compute market values, and return a cleaned CSV without problematic rows.</p>
+      <form class="uploader" onsubmit="uploadCsv(event)">
+        <input type="file" id="csv" accept=".csv" />
+        <div style="margin-top:12px">
+          <button class="btn" id="process" type="submit">Process CSV</button>
+          <span id="status" style="margin-left:10px"></span>
+        </div>
+        <div class="footer">
+          <a id="download" class="btn download" style="display:none" href="#">Download Enriched CSV</a>
+        </div>
+      </form>
+    </div>
+
+    <div class="grid" style="margin-top:20px">
+      <div id="results"></div>
+      <div id="errors"></div>
+    </div>
+  </div>
+</body>
+</html>
+
+
