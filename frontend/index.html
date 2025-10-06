@@ -24,7 +24,7 @@
       btn.disabled=true; status.textContent='Processing...';
       const fd = new FormData(); fd.append('file', fileInput.files[0]);
       try{
-        const resp = await fetch('/api/enrich', { method:'POST', body: fd });
+        const resp = await fetch('https://findingticker-backend.onrender.com/api/enrich', { method:'POST', body: fd });
         if(!resp.ok){
           const err = await resp.json().catch(()=>({detail:'Unknown error'}));
           throw new Error(err.detail||'Failed');
